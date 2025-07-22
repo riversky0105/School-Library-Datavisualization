@@ -40,8 +40,8 @@ def load_data():
     df1_seoul = df1_seoul[['도서관명', '시군구', '장서수(인쇄)', '사서수', '대출자수', '대출권수', '도서예산(자료구입비)']]
     df1_seoul.columns = ['학교명', '지역', '장서수', '사서수', '대출자수', '대출권수', '자료구입비']
 
-    df3_seoul = df3_seoul[['학교명', '지역', '자료구입비예산액', '도서관대출자료수', '전년도전체학생수', '도서관대여학생수', '1인당대출자료수']]
-    df3_seoul.columns = ['학교명', '지역', '자료구입비', '대출자료수', '전체학생수', '대여학생수', '1인당대출자료수']
+    df3_seoul = df3_seoul[['학교명', '지역', '자료구입비예산액', '도서관대출자료수']]
+    df3_seoul.columns = ['학교명', '지역', '자료구입비', '대출자료수']
 
     # 병합
     df_merged = pd.merge(df1_seoul, df3_seoul, on=['학교명', '지역'], how='outer')
@@ -52,8 +52,7 @@ def load_data():
         df_merged.drop(columns=['자료구입비_x', '자료구입비_y'], inplace=True)
 
     # 숫자형 변환 및 결측치 처리
-    numeric_cols = ['장서수', '사서수', '대출자수', '대출권수', '자료구입비',
-                    '대출자료수', '전체학생수', '대여학생수', '1인당대출자료수']
+    numeric_cols = ['장서수', '사서수', '대출자수', '대출권수', '자료구입비', '대출자료수']
     for col in numeric_cols:
         if col in df_merged.columns:
             df_merged[col] = pd.to_numeric(df_merged[col], errors='coerce')
@@ -71,13 +70,13 @@ st.markdown("문화체육관광부, 교육통계, 서울시 데이터를 통합�
 st.dataframe(df)
 
 # ---------------------------
-# ✅ 4. 머신러닝 학습 및 평가
+# ✅ 4. 머신러닝 학습 및 평가 (대여학생수, 전체학생수 제외)
 # ---------------------------
 st.subheader("🤖 머신러닝 예측 (RandomForest)")
 st.markdown("학교 도서관의 **대출자수(이용자 수)**를 예측하고, 어떤 변수가 영향을 많이 주는지 분석했습니다.")
 
-# 독립 변수와 종속 변수
-X = df[['장서수', '사서수', '자료구입비', '전체학생수', '대여학생수']]
+# 독립 변수와 종속 변수 (대여학생수, 전체학생수 제외)
+X = df[['장서수', '사서수', '자료구입비']]
 y = df['대출자수']
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
