@@ -9,7 +9,6 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
-import seaborn as sns
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
@@ -111,14 +110,22 @@ else:
     df = pd.concat([df_school, df_public], ignore_index=True)
 
 # ---------------------------
-# ✅ 상관계수 히트맵
+# ✅ 상관계수 히트맵 (matplotlib)
 # ---------------------------
 st.subheader("📊 변수 간 상관관계 (히트맵)")
 st.markdown(f"선택한 데이터셋({option})의 변수 간 상관관계를 보여줍니다.")
 
 corr = df[["장서수", "사서수", "예산", "방문자수"]].corr()
-fig, ax = plt.subplots(figsize=(6, 4))
-sns.heatmap(corr, annot=True, fmt=".2f", cmap="Blues", ax=ax, cbar=True)
+fig, ax = plt.subplots(figsize=(5, 4))
+cax = ax.matshow(corr, cmap="Blues")
+plt.colorbar(cax)
+ax.set_xticks(range(len(corr.columns)))
+ax.set_yticks(range(len(corr.columns)))
+ax.set_xticklabels(corr.columns, rotation=45, fontproperties=font_prop)
+ax.set_yticklabels(corr.columns, fontproperties=font_prop)
+for i in range(len(corr.columns)):
+    for j in range(len(corr.columns)):
+        ax.text(j, i, f"{corr.values[i, j]:.2f}", va='center', ha='center', color='black', fontproperties=font_prop)
 ax.set_title(f"{option} 변수 간 상관관계", fontproperties=font_prop)
 st.pyplot(fig)
 
@@ -133,7 +140,6 @@ y = df["방문자수"]
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# RandomForest
 rf_model = RandomForestRegressor(n_estimators=200, random_state=42)
 rf_model.fit(X_train, y_train)
 y_pred = rf_model.predict(X_test)
@@ -151,7 +157,6 @@ ax2.set_ylabel("변수", fontproperties=font_prop)
 ax2.set_yticklabels(importance.sort_values().index, fontproperties=font_prop)
 st.pyplot(fig2)
 
-# Linear Regression 비교 (교차 검증)
 lr_model = LinearRegression()
 rf_scores = cross_val_score(rf_model, X, y, cv=5, scoring="r2")
 lr_scores = cross_val_score(lr_model, X, y, cv=5, scoring="r2")
