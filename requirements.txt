@@ -1,5 +1,9 @@
-streamlit
-pandas
-numpy
-matplotlib==3.8.0
-scikit-learn
+streamlit==1.37.0
+pandas==2.2.2
+numpy==1.26.4
+matplotlib==3.9.0
+scikit-learn==1.5.1
+folium==0.17.0
+streamlit-folium==0.21.0
+shapely==2.0.4
+requests==2.32.3
