@@ -9,20 +9,27 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 
 # ---------------------------
 # ✅ 한글 폰트 설정
 # ---------------------------
-font_path = os.path.join(os.getcwd(), "fonts", "NanumGothicCoding.ttf")
-if os.path.exists(font_path):
-    font_prop = fm.FontProperties(fname=font_path)
-    mpl.rcParams["font.family"] = font_prop.get_name()
-    mpl.rcParams["axes.unicode_minus"] = False
-else:
-    font_prop = None
+font_dir = "fonts"
+os.makedirs(font_dir, exist_ok=True)
+font_path = os.path.join(font_dir, "NanumGothicCoding.ttf")
+
+# 자동 다운로드 (필요 시)
+import urllib.request
+if not os.path.exists(font_path):
+    url = "https://github.com/naver/nanumfont/releases/download/VER2.0/NanumGothicCoding.ttf"
+    urllib.request.urlretrieve(url, font_path)
+
+font_prop = fm.FontProperties(fname=font_path)
+mpl.rcParams["font.family"] = font_prop.get_name()
+mpl.rcParams["axes.unicode_minus"] = False
 
 # ---------------------------
 # ✅ 데이터 로드 및 전처리 (전체 연도)
@@ -34,17 +41,18 @@ def load_all_data():
 
     rows = []
     for year in range(2011, 2024):  # 2011 ~ 2023
-        rows.append(df[["학교급별(1)", f"{year}.1", f"{year}.2", f"{year}.3"]]
+        rows.append(df[["학교급별(1)", f"{year}.1", f"{year}.2", f"{year}.3", f"{year}.4"]]
                     .assign(연도=year)
                     .rename(columns={
                         "학교급별(1)": "학교급",
                         f"{year}.1": "장서수",
                         f"{year}.2": "사서수",
-                        f"{year}.3": "방문자수"
+                        f"{year}.3": "방문자수",
+                        f"{year}.4": "예산"
                     }))
     df_all = pd.concat(rows, ignore_index=True)
 
-    for col in ["장서수", "사서수", "방문자수"]:
+    for col in ["장서수", "사서수", "방문자수", "예산"]:
         df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
     return df_all
 
@@ -65,33 +73,40 @@ ax.set_title("학교급별 연도별 방문자 수 변화 (2011~2023)", fontprop
 ax.set_xlabel("연도", fontproperties=font_prop)
 ax.set_ylabel("1관당 방문자 수", fontproperties=font_prop)
 ax.legend(prop=font_prop)
+
 yticks = ax.get_yticks()
+ax.set_yticks(yticks)
 ax.set_yticklabels([f"{int(t):,}" for t in yticks], fontproperties=font_prop)
+xticks = df_all["연도"].unique()
+ax.set_xticks(xticks)
+ax.set_xticklabels(xticks, fontproperties=font_prop)
 st.pyplot(fig)
 
 latest = df_all[df_all["연도"] == 2023].sort_values(by="방문자수", ascending=False).iloc[0]
 st.success(f"✅ 2023년 기준 **{latest['학교급']}**이(가) 가장 많은 방문자수를 기록했습니다. (약 **{int(latest['방문자수']):,}명**)")
 
 # ---------------------------
-# ✅ 머신러닝 (RandomForest)
+# ✅ 머신러닝 (RandomForest + Linear Regression 비교)
 # ---------------------------
 st.subheader("🔍 전체 연도 기반 방문자 수 예측 및 변수 중요도")
-st.markdown("장서수와 사서수가 방문자 수에 어떤 영향을 미치는지 분석했습니다.")
+st.markdown("장서수, 사서수, 예산이 방문자 수에 어떤 영향을 미치는지 분석했습니다.")
 
-X = df_all[["장서수", "사서수"]]
+X = df_all[["장서수", "사서수", "예산"]]
 y = df_all["방문자수"]
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-model = RandomForestRegressor(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
-y_pred = model.predict(X_test)
+# RandomForest
+rf_model = RandomForestRegressor(n_estimators=200, random_state=42)
+rf_model.fit(X_train, y_train)
+y_pred = rf_model.predict(X_test)
 
 mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
+
 st.markdown(f"✅ **예측 오차(MSE)**: `{mse:,.0f}` | **정확도(R²)**: `{r2:.4f}`")
 
-importance = pd.Series(model.feature_importances_, index=X.columns)
+importance = pd.Series(rf_model.feature_importances_, index=X.columns)
 fig2, ax2 = plt.subplots(figsize=(6, 4))
 importance.sort_values().plot.barh(ax=ax2, color="skyblue")
 ax2.set_title("RandomForest 변수 중요도", fontproperties=font_prop)
@@ -99,6 +114,17 @@ ax2.set_xlabel("중요도", fontproperties=font_prop)
 ax2.set_ylabel("변수", fontproperties=font_prop)
 ax2.set_yticklabels(importance.sort_values().index, fontproperties=font_prop)
 st.pyplot(fig2)
+
+# Linear Regression 비교 (교차 검증)
+lr_model = LinearRegression()
+rf_scores = cross_val_score(rf_model, X, y, cv=5, scoring="r2")
+lr_scores = cross_val_score(lr_model, X, y, cv=5, scoring="r2")
+
+st.subheader("📌 모델 성능 비교 (5-Fold 교차 검증)")
+st.markdown(f"""
+✅ **RandomForest 평균 R²**: `{rf_scores.mean():.4f}`  
+✅ **Linear Regression 평균 R²**: `{lr_scores.mean():.4f}`
+""")
 
 # ---------------------------
 # ✅ 통계 데이터 출력
