@@ -12,6 +12,7 @@ import matplotlib.font_manager as fm
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.inspection import permutation_importance
 import urllib.request
 
 # ---------------------------
@@ -133,7 +134,10 @@ mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
 st.markdown(f"✅ **예측 오차(MSE)**: `{mse:,.0f}` | **정확도(R²)**: `{r2:.4f}`")
 
-importance = pd.Series(hg_model.feature_importances_, index=X.columns)
+# ✅ permutation_importance로 변수 중요도 계산
+perm_importance = permutation_importance(hg_model, X_test, y_test, n_repeats=30, random_state=42)
+importance = pd.Series(perm_importance.importances_mean, index=X.columns)
+
 fig2, ax2 = plt.subplots(figsize=(6, 4))
 importance.sort_values().plot.barh(ax=ax2, color="salmon")
 ax2.set_title(f"{option} HistGradientBoosting 변수 중요도", fontproperties=font_prop)
