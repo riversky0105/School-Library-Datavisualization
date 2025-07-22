@@ -9,9 +9,10 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.preprocessing import StandardScaler
 from sklearn.inspection import permutation_importance
 import urllib.request
 
@@ -110,32 +111,46 @@ else:
     df = pd.concat([df_school, df_public], ignore_index=True)
 
 # ---------------------------
-# ✅ HistGradientBoosting 회귀 모델 분석
+# ✅ 전처리 + 모델 학습
 # ---------------------------
-st.subheader("🔍 방문자 수 예측 및 변수 중요도 (HistGradientBoosting)")
+st.subheader("🔍 방문자 수 예측 및 변수 중요도 (HistGradientBoosting + 튜닝)")
 st.markdown(f"{option} 데이터에서 장서수, 사서수, 예산이 방문자 수에 미치는 영향을 분석했습니다.")
 
 X = df[["장서수", "사서수", "예산"]].fillna(df[["장서수", "사서수", "예산"]].median())
 y = df["방문자수"]
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# 전처리 (스케일링)
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# 모델 (튜닝된 하이퍼파라미터 사용)
-hg_model = HistGradientBoostingRegressor(
-    max_iter=500,
-    learning_rate=0.05,
-    max_depth=5,
-    random_state=42
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# 하이퍼파라미터 튜닝
+param_grid = {
+    "learning_rate": [0.01, 0.05, 0.1],
+    "max_depth": [3, 5, 7],
+    "max_iter": [300, 500, 700]
+}
+
+grid_search = GridSearchCV(
+    HistGradientBoostingRegressor(random_state=42),
+    param_grid,
+    cv=3,
+    scoring="r2",
+    n_jobs=-1
 )
-hg_model.fit(X_train, y_train)
-y_pred = hg_model.predict(X_test)
+grid_search.fit(X_train, y_train)
+
+best_model = grid_search.best_estimator_
+y_pred = best_model.predict(X_test)
 
 mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
+st.markdown(f"✅ **최적 하이퍼파라미터**: `{grid_search.best_params_}`")
 st.markdown(f"✅ **예측 오차(MSE)**: `{mse:,.0f}` | **정확도(R²)**: `{r2:.4f}`")
 
-# ✅ permutation_importance로 변수 중요도 계산
-perm_importance = permutation_importance(hg_model, X_test, y_test, n_repeats=30, random_state=42)
+# 변수 중요도
+perm_importance = permutation_importance(best_model, X_test, y_test, n_repeats=30, random_state=42)
 importance = pd.Series(perm_importance.importances_mean, index=X.columns)
 
 fig2, ax2 = plt.subplots(figsize=(6, 4))
@@ -147,9 +162,9 @@ ax2.set_yticklabels(importance.sort_values().index, fontproperties=font_prop)
 st.pyplot(fig2)
 
 # 교차 검증
-hg_scores = cross_val_score(hg_model, X, y, cv=5, scoring="r2")
+scores = cross_val_score(best_model, X_scaled, y, cv=5, scoring="r2")
 st.subheader("📌 모델 성능 (5-Fold 교차 검증)")
-st.markdown(f"✅ **HistGradientBoosting 평균 R²**: `{hg_scores.mean():.4f}`")
+st.markdown(f"✅ **평균 R²**: `{scores.mean():.4f}`")
 
 # ---------------------------
 # ✅ 데이터 테이블 출력
