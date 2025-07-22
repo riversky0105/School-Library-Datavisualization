@@ -1,7 +1,7 @@
 import streamlit as st
-st.set_page_config(page_title="서울시 학교도서관 이용 분석 및 예측", layout="wide")
+st.set_page_config(page_title="서울시 도서관 통합 분석 및 예측", layout="wide")
 
-st.title("📚 서울특별시 학교도서관 이용자 수 분석 및 예측")
+st.title("📚 서울특별시 도서관 통합 분석 및 예측")
 
 import pandas as pd
 import numpy as np
@@ -9,6 +9,10 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
+import requests
+import folium
+from shapely.geometry import shape
+from streamlit_folium import folium_static
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
@@ -24,17 +28,16 @@ else:
     font_prop = None
 
 # ---------------------------
-# ✅ 2. 데이터 불러오기 함수 (절대경로로 변경)
+# ✅ 2. 데이터 불러오기 함수 (학교 + 자치구)
 # ---------------------------
 @st.cache_data
-def load_data():
-    base_path = os.path.dirname(__file__)  # 현재 py 파일이 있는 디렉토리
+def load_school_data():
+    base_path = os.path.dirname(__file__)
     file1 = os.path.join(base_path, "문화체육관광부_국가도서관통계_전국학교도서관통계_20231231.csv")
     file2 = os.path.join(base_path, "학교도서관현황_20250717223352.csv")
     file3 = os.path.join(base_path, "서울시 학교별 학교도서관 현황.csv")
 
     df1 = pd.read_csv(file1, encoding="cp949")
-    df2 = pd.read_csv(file2, encoding="cp949")  # 현재 사용하지 않지만 향후 분석 가능
     df3 = pd.read_csv(file3, encoding="cp949")
 
     # 서울시 데이터 필터링
@@ -65,24 +68,29 @@ def load_data():
 
     return df_merged
 
-df = load_data()
+@st.cache_data
+def load_gu_data():
+    df = pd.read_csv("공공도서관 자치구별 통계 파일.csv", encoding='cp949', header=1)
+    df = df[df.iloc[:, 0] != '소계']
+    df.columns = [
+        '자치구명','개소수','좌석수','자료수_도서','자료수_비도서','자료수_연속간행물',
+        '도서관 방문자수','연간대출책수','직원수','직원수_남','직원수_여','예산'
+    ]
+    for col in df.columns[1:]:
+        df[col] = df[col].astype(str).str.replace(',', '').astype(float)
+    return df
+
+df_school = load_school_data()
+df_gu = load_gu_data()
 
 # ---------------------------
-# ✅ 3. 데이터 테이블 표시
+# ✅ 3. 학교 데이터 머신러닝 분석
 # ---------------------------
-st.subheader("📄 서울시 학교도서관 통합 데이터")
-st.markdown("문화체육관광부, 교육통계, 서울시 데이터를 통합한 결과입니다.")
-st.dataframe(df)
-
-# ---------------------------
-# ✅ 4. 머신러닝 학습 및 평가 (대여학생수, 전체학생수 제외)
-# ---------------------------
-st.subheader("🤖 머신러닝 예측 (RandomForest)")
+st.subheader("🤖 학교도서관 이용자 수 예측 (RandomForest)")
 st.markdown("학교 도서관의 **대출자수(이용자 수)**를 예측하고, 어떤 변수가 영향을 많이 주는지 분석했습니다.")
 
-# 독립 변수와 종속 변수 (대여학생수, 전체학생수 제외)
-X = df[['장서수', '사서수', '자료구입비']]
-y = df['대출자수']
+X = df_school[['장서수', '사서수', '자료구입비']]
+y = df_school['대출자수']
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 model = RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42)
@@ -94,9 +102,7 @@ r2 = r2_score(y_test, y_pred)
 
 st.success(f"✅ **예측 오차(MSE)**: `{mse:,.0f}` | **정확도(R²)**: `{r2:.4f}`")
 
-# ---------------------------
-# ✅ 5. 변수 중요도 시각화
-# ---------------------------
+# 변수 중요도
 importance = pd.Series(model.feature_importances_, index=X.columns).sort_values()
 
 fig, ax = plt.subplots(figsize=(8, 5))
@@ -108,8 +114,56 @@ if font_prop:
     ax.set_yticklabels(importance.index, fontproperties=font_prop)
 st.pyplot(fig)
 
-# ---------------------------
-# ✅ 6. 주요 인사이트
-# ---------------------------
 top_var = importance.sort_values(ascending=False).index[0]
 st.info(f"📊 **대출자수(이용자 수)에 가장 큰 영향을 미치는 변수는 `{top_var}`입니다.**")
+
+# ---------------------------
+# ✅ 4. 서울시 자치구별 지도 시각화
+# ---------------------------
+st.subheader("🗺️ 서울시 자치구별 도서관 이용자 수 지도")
+st.markdown("서울특별시 각 자치구의 도서관 방문자 수를 지도 위에 시각화했습니다. 마커 크기가 클수록 방문자 수가 많습니다.")
+
+df_users = df_gu[['자치구명', '도서관 방문자수']].copy()
+df_users.columns = ['구', '이용자수']
+
+geo_url = "https://raw.githubusercontent.com/southkorea/seoul-maps/master/kostat/2013/json/seoul_municipalities_geo_simple.json"
+res = requests.get(geo_url)
+seoul_geo = res.json()
+
+m = folium.Map(location=[37.5665, 126.9780], zoom_start=11)
+folium.GeoJson(seoul_geo, name="경계", style_function=lambda f: {
+    'fillColor': '#dddddd',
+    'color': 'black',
+    'weight': 3,
+    'fillOpacity': 0.2
+}).add_to(m)
+
+min_v, max_v = df_users['이용자수'].min(), df_users['이용자수'].max()
+for feature in seoul_geo['features']:
+    gu = feature['properties']['name']
+    if gu in df_users['구'].values:
+        center = shape(feature['geometry']).centroid
+        val = df_users[df_users['구'] == gu]['이용자수'].values[0]
+        norm = (val - min_v) / (max_v - min_v)
+        folium.CircleMarker(
+            location=[center.y, center.x],
+            radius=10 + 30 * norm,
+            color='blue',
+            fill=True,
+            fill_color='blue',
+            fill_opacity=0.6,
+            popup=f"{gu}: {val:,}명"
+        ).add_to(m)
+
+folium.LayerControl().add_to(m)
+folium_static(m)
+
+top = df_users.sort_values(by='이용자수', ascending=False).iloc[0]
+st.success(f"✅ 도서관을 가장 많이 이용한 구는 **{top['구']}**, 이용자 수는 총 **{top['이용자수']:,}명**입니다.")
+
+# ---------------------------
+# ✅ 5. 학교 통합 데이터 테이블 (그래프 아래 배치)
+# ---------------------------
+st.subheader("📄 서울시 학교도서관 통합 데이터")
+st.markdown("문화체육관광부, 교육통계, 서울시 데이터를 통합한 결과입니다.")
+st.dataframe(df_school)
