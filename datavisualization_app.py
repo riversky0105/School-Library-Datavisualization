@@ -24,13 +24,18 @@ else:
     font_prop = None
 
 # ---------------------------
-# ✅ 2. 데이터 불러오기 함수
+# ✅ 2. 데이터 불러오기 함수 (절대경로로 변경)
 # ---------------------------
 @st.cache_data
 def load_data():
-    df1 = pd.read_csv("문화체육관광부_국가도서관통계_전국학교도서관통계_20231231.csv", encoding="cp949")
-    df2 = pd.read_csv("학교도서관현황_20250717223352.csv", encoding="cp949")
-    df3 = pd.read_csv("서울시 학교별 학교도서관 현황.csv", encoding="cp949")
+    base_path = os.path.dirname(__file__)  # 현재 py 파일이 있는 디렉토리
+    file1 = os.path.join(base_path, "문화체육관광부_국가도서관통계_전국학교도서관통계_20231231.csv")
+    file2 = os.path.join(base_path, "학교도서관현황_20250717223352.csv")
+    file3 = os.path.join(base_path, "서울시 학교별 학교도서관 현황.csv")
+
+    df1 = pd.read_csv(file1, encoding="cp949")
+    df2 = pd.read_csv(file2, encoding="cp949")  # 현재 사용하지 않지만 향후 분석 가능
+    df3 = pd.read_csv(file3, encoding="cp949")
 
     # 서울시 데이터 필터링
     df1_seoul = df1[df1['행정구역'] == '서울'].copy()
