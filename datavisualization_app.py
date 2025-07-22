@@ -13,66 +13,75 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
-# -------------------------------
+# ---------------------------
 # ✅ 한글 폰트 설정
-# -------------------------------
+# ---------------------------
 font_path = os.path.join(os.getcwd(), "fonts", "NanumGothicCoding.ttf")
 if os.path.exists(font_path):
     font_prop = fm.FontProperties(fname=font_path)
-    mpl.rcParams['axes.unicode_minus'] = False
+    mpl.rcParams["font.family"] = font_prop.get_name()
+    mpl.rcParams["axes.unicode_minus"] = False
 else:
     font_prop = None
 
-# -------------------------------
-# ✅ 데이터 불러오기 & 전처리
-# -------------------------------
+# ---------------------------
+# ✅ 데이터 로드 및 전처리 (전체 연도)
+# ---------------------------
 @st.cache_data
-def load_school_lib_data():
+def load_all_data():
     df = pd.read_csv("학교도서관현황_20250717223352.csv", encoding="cp949")
-    df = df[df["학교급별(1)"].isin(["초등학교", "중학교", "고등학교"])].reset_index(drop=True)
+    df = df[df["학교급별(1)"].isin(["초등학교", "중학교", "고등학교"])]
 
-    # 연도별 필요한 컬럼만 추출 (예: 2023년 기준)
-    cols = ["학교급별(1)", "2023.1", "2023.2", "2023.3"]
-    df = df[cols]
-    df.columns = ["학교급", "장서수", "사서수", "방문자수"]
+    rows = []
+    for year in range(2011, 2024):  # 2011 ~ 2023
+        rows.append(df[["학교급별(1)", f"{year}.1", f"{year}.2", f"{year}.3"]]
+                    .assign(연도=year)
+                    .rename(columns={
+                        "학교급별(1)": "학교급",
+                        f"{year}.1": "장서수",
+                        f"{year}.2": "사서수",
+                        f"{year}.3": "방문자수"
+                    }))
+    df_all = pd.concat(rows, ignore_index=True)
 
-    # 숫자로 변환
     for col in ["장서수", "사서수", "방문자수"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
+        df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
+    return df_all
 
-df_stat = load_school_lib_data()
+df_all = load_all_data()
 
-# -------------------------------
-# ✅ 학교급별 방문자 수 시각화
-# -------------------------------
-st.subheader("📊 학교급별 도서관 방문자 수")
-st.markdown("2023년 기준 학교급별 1관당 방문자 수입니다.")
+# ---------------------------
+# ✅ 학교급별 연도별 방문자 수 변화
+# ---------------------------
+st.subheader("📊 학교급별 연도별 방문자 수 변화")
+st.markdown("2011년부터 2023년까지 학교급별 1관당 방문자 수 변화를 보여줍니다.")
 
-df_sorted = df_stat.sort_values(by="방문자수", ascending=False).reset_index(drop=True)
+fig, ax = plt.subplots(figsize=(12, 6))
+for school in df_all["학교급"].unique():
+    data = df_all[df_all["학교급"] == school]
+    ax.plot(data["연도"], data["방문자수"], marker="o", label=school)
 
-fig, ax = plt.subplots(figsize=(8, 5))
-ax.bar(df_sorted["학교급"], df_sorted["방문자수"], color="skyblue")
-ax.set_title("학교급별 도서관 방문자 수 (2023)", fontproperties=font_prop)
-ax.set_xlabel("학교급", fontproperties=font_prop)
+ax.set_title("학교급별 연도별 방문자 수 변화 (2011~2023)", fontproperties=font_prop)
+ax.set_xlabel("연도", fontproperties=font_prop)
 ax.set_ylabel("1관당 방문자 수", fontproperties=font_prop)
+ax.legend(prop=font_prop)
 yticks = ax.get_yticks()
-ax.set_yticklabels([f"{int(y):,}" for y in yticks], fontproperties=font_prop)
+ax.set_yticklabels([f"{int(t):,}" for t in yticks], fontproperties=font_prop)
 st.pyplot(fig)
 
-top = df_sorted.iloc[0]
-st.success(f"✅ 2023년 기준 **{top['학교급']}**이(가) 가장 많은 방문자수를 기록했습니다. (약 **{int(top['방문자수']):,}명**)")
+latest = df_all[df_all["연도"] == 2023].sort_values(by="방문자수", ascending=False).iloc[0]
+st.success(f"✅ 2023년 기준 **{latest['학교급']}**이(가) 가장 많은 방문자수를 기록했습니다. (약 **{int(latest['방문자수']):,}명**)")
 
-# -------------------------------
-# ✅ 머신러닝 예측 (RandomForest)
-# -------------------------------
-st.subheader("🔍 방문자 수 예측 및 변수 중요도")
-st.markdown("장서수와 사서수가 방문자 수에 미치는 영향을 분석했습니다.")
+# ---------------------------
+# ✅ 머신러닝 (RandomForest)
+# ---------------------------
+st.subheader("🔍 전체 연도 기반 방문자 수 예측 및 변수 중요도")
+st.markdown("장서수와 사서수가 방문자 수에 어떤 영향을 미치는지 분석했습니다.")
 
-X = df_stat[["장서수", "사서수"]]
-y = df_stat["방문자수"]
+X = df_all[["장서수", "사서수"]]
+y = df_all["방문자수"]
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 model = RandomForestRegressor(n_estimators=100, random_state=42)
 model.fit(X_train, y_train)
@@ -91,8 +100,9 @@ ax2.set_ylabel("변수", fontproperties=font_prop)
 ax2.set_yticklabels(importance.sort_values().index, fontproperties=font_prop)
 st.pyplot(fig2)
 
-# -------------------------------
-# ✅ 원본 데이터 표시
-# -------------------------------
-st.subheader("📄 분석에 사용된 데이터")
-st.dataframe(df_stat)
+# ---------------------------
+# ✅ 통계 데이터 출력
+# ---------------------------
+st.subheader("📄 전체 연도 통계 데이터")
+st.markdown("2011년부터 2023년까지 학교급별 도서관 운영 데이터를 확인할 수 있습니다.")
+st.dataframe(df_all)
