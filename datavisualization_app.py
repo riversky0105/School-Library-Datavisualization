@@ -1,7 +1,7 @@
 import streamlit as st
-st.set_page_config(page_title="학교 & 공공 도서관 통합 분석 (최적화)", layout="wide")
+st.set_page_config(page_title="서울시 학교도서관 이용 분석 및 예측", layout="wide")
 
-st.title("📚 학교 & 공공 도서관 통합 분석 및 예측 (최적화된 모델)")
+st.title("📚 서울특별시 학교도서관 이용자 수 분석 및 예측")
 
 import pandas as pd
 import numpy as np
@@ -9,165 +9,103 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
-from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.inspection import permutation_importance
-import urllib.request
 
 # ---------------------------
-# ✅ 한글 폰트 설정
+# ✅ 1. 한글 폰트 설정
 # ---------------------------
-font_dir = "fonts"
-os.makedirs(font_dir, exist_ok=True)
-font_path = os.path.join(font_dir, "NanumGothicCoding.ttf")
-
-if not os.path.exists(font_path):
-    url = "https://github.com/naver/nanumfont/releases/download/VER2.0/NanumGothicCoding.ttf"
-    urllib.request.urlretrieve(url, font_path)
-
-font_prop = fm.FontProperties(fname=font_path)
-mpl.rcParams["font.family"] = font_prop.get_name()
-mpl.rcParams["axes.unicode_minus"] = False
-
-# ---------------------------
-# ✅ 학교 도서관 데이터 로드
-# ---------------------------
-@st.cache_data
-def load_school_data():
-    df = pd.read_csv("학교도서관현황_20250717223352.csv", encoding="cp949")
-    df = df[df["학교급별(1)"].isin(["초등학교", "중학교", "고등학교"])]
-
-    rows = []
-    for year in range(2011, 2024):
-        base_cols = [f"{year}.1", f"{year}.2", f"{year}.3"]
-        existing_cols = [col for col in base_cols if col in df.columns]
-        budget_col = f"{year}.4" if f"{year}.4" in df.columns else None
-
-        cols_to_use = ["학교급별(1)"] + existing_cols
-        if budget_col:
-            cols_to_use.append(budget_col)
-
-        temp_df = df[cols_to_use].assign(연도=year)
-        rename_dict = {
-            "학교급별(1)": "학교급",
-            f"{year}.1": "장서수",
-            f"{year}.2": "사서수",
-            f"{year}.3": "방문자수",
-        }
-        if budget_col:
-            rename_dict[budget_col] = "예산"
-
-        temp_df = temp_df.rename(columns=rename_dict)
-        if "예산" not in temp_df.columns:
-            temp_df["예산"] = np.nan
-
-        rows.append(temp_df)
-
-    df_all = pd.concat(rows, ignore_index=True)
-    for col in ["장서수", "사서수", "방문자수", "예산"]:
-        df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
-    df_all["구분"] = "학교 도서관"
-    return df_all
-
-# ---------------------------
-# ✅ 공공 도서관 데이터 로드
-# ---------------------------
-@st.cache_data
-def load_public_data():
-    df = pd.read_csv("공공도서관 자치구별 통계 파일.csv", encoding="cp949", header=1)
-    df = df[df["자치구별(2)"] != "소계"]
-
-    df = df.rename(columns={
-        "자치구별(2)": "자치구",
-        "소계": "개소수",
-        "소계.1": "좌석수",
-        "도서": "장서수",
-        "소계.2": "방문자수",
-        "소계.4": "사서수",
-        "소계.5": "예산"
-    })
-
-    df = df[["자치구", "장서수", "사서수", "방문자수", "예산"]]
-    for col in ["장서수", "사서수", "방문자수", "예산"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["구분"] = "공공 도서관"
-    return df
-
-# ---------------------------
-# ✅ 데이터 선택
-# ---------------------------
-df_school = load_school_data()
-df_public = load_public_data()
-
-option = st.radio("분석할 데이터셋을 선택하세요:", ["학교 도서관", "공공 도서관", "통합 비교"])
-
-if option == "학교 도서관":
-    df = df_school.copy()
-elif option == "공공 도서관":
-    df = df_public.copy()
+font_path = os.path.join(os.getcwd(), "fonts", "NanumGothicCoding.ttf")
+if os.path.exists(font_path):
+    font_prop = fm.FontProperties(fname=font_path)
+    mpl.rcParams['axes.unicode_minus'] = False
 else:
-    df = pd.concat([df_school, df_public], ignore_index=True)
+    font_prop = None
 
 # ---------------------------
-# ✅ 전처리 + 모델 학습
+# ✅ 2. 데이터 불러오기 함수
 # ---------------------------
-st.subheader("🔍 방문자 수 예측 및 변수 중요도 (HistGradientBoosting + 튜닝)")
-st.markdown(f"{option} 데이터에서 장서수, 사서수, 예산이 방문자 수에 미치는 영향을 분석했습니다.")
+@st.cache_data
+def load_data():
+    df1 = pd.read_csv("문화체육관광부_국가도서관통계_전국학교도서관통계_20231231.csv", encoding="cp949")
+    df2 = pd.read_csv("학교도서관현황_20250717223352.csv", encoding="cp949")
+    df3 = pd.read_csv("서울시 학교별 학교도서관 현황.csv", encoding="cp949")
 
-X = df[["장서수", "사서수", "예산"]].fillna(df[["장서수", "사서수", "예산"]].median())
-y = df["방문자수"]
+    # 서울시 데이터 필터링
+    df1_seoul = df1[df1['행정구역'] == '서울'].copy()
+    df3_seoul = df3[df3['시도교육청'] == '서울특별시교육청'].copy()
 
-# 전처리 (스케일링)
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+    # 주요 컬럼만 추출
+    df1_seoul = df1_seoul[['도서관명', '시군구', '장서수(인쇄)', '사서수', '대출자수', '대출권수', '도서예산(자료구입비)']]
+    df1_seoul.columns = ['학교명', '지역', '장서수', '사서수', '대출자수', '대출권수', '자료구입비']
 
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    df3_seoul = df3_seoul[['학교명', '지역', '자료구입비예산액', '도서관대출자료수', '전년도전체학생수', '도서관대여학생수', '1인당대출자료수']]
+    df3_seoul.columns = ['학교명', '지역', '자료구입비', '대출자료수', '전체학생수', '대여학생수', '1인당대출자료수']
 
-# 하이퍼파라미터 튜닝
-param_grid = {
-    "learning_rate": [0.01, 0.05, 0.1],
-    "max_depth": [3, 5, 7],
-    "max_iter": [300, 500, 700]
-}
+    # 병합
+    df_merged = pd.merge(df1_seoul, df3_seoul, on=['학교명', '지역'], how='outer')
 
-grid_search = GridSearchCV(
-    HistGradientBoostingRegressor(random_state=42),
-    param_grid,
-    cv=3,
-    scoring="r2",
-    n_jobs=-1
-)
-grid_search.fit(X_train, y_train)
+    # 자료구입비 합산
+    if '자료구입비_x' in df_merged.columns and '자료구입비_y' in df_merged.columns:
+        df_merged['자료구입비'] = df_merged[['자료구입비_x', '자료구입비_y']].sum(axis=1)
+        df_merged.drop(columns=['자료구입비_x', '자료구입비_y'], inplace=True)
 
-best_model = grid_search.best_estimator_
-y_pred = best_model.predict(X_test)
+    # 숫자형 변환 및 결측치 처리
+    numeric_cols = ['장서수', '사서수', '대출자수', '대출권수', '자료구입비',
+                    '대출자료수', '전체학생수', '대여학생수', '1인당대출자료수']
+    for col in numeric_cols:
+        if col in df_merged.columns:
+            df_merged[col] = pd.to_numeric(df_merged[col], errors='coerce')
+    df_merged[numeric_cols] = df_merged[numeric_cols].fillna(0)
+
+    return df_merged
+
+df = load_data()
+
+# ---------------------------
+# ✅ 3. 데이터 테이블 표시
+# ---------------------------
+st.subheader("📄 서울시 학교도서관 통합 데이터")
+st.markdown("문화체육관광부, 교육통계, 서울시 데이터를 통합한 결과입니다.")
+st.dataframe(df)
+
+# ---------------------------
+# ✅ 4. 머신러닝 학습 및 평가
+# ---------------------------
+st.subheader("🤖 머신러닝 예측 (RandomForest)")
+st.markdown("학교 도서관의 **대출자수(이용자 수)**를 예측하고, 어떤 변수가 영향을 많이 주는지 분석했습니다.")
+
+# 독립 변수와 종속 변수
+X = df[['장서수', '사서수', '자료구입비', '전체학생수', '대여학생수']]
+y = df['대출자수']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+model = RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
 
 mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
-st.markdown(f"✅ **최적 하이퍼파라미터**: `{grid_search.best_params_}`")
-st.markdown(f"✅ **예측 오차(MSE)**: `{mse:,.0f}` | **정확도(R²)**: `{r2:.4f}`")
 
-# 변수 중요도
-perm_importance = permutation_importance(best_model, X_test, y_test, n_repeats=30, random_state=42)
-importance = pd.Series(perm_importance.importances_mean, index=X.columns)
-
-fig2, ax2 = plt.subplots(figsize=(6, 4))
-importance.sort_values().plot.barh(ax=ax2, color="salmon")
-ax2.set_title(f"{option} HistGradientBoosting 변수 중요도", fontproperties=font_prop)
-ax2.set_xlabel("중요도", fontproperties=font_prop)
-ax2.set_ylabel("변수", fontproperties=font_prop)
-ax2.set_yticklabels(importance.sort_values().index, fontproperties=font_prop)
-st.pyplot(fig2)
-
-# 교차 검증
-scores = cross_val_score(best_model, X_scaled, y, cv=5, scoring="r2")
-st.subheader("📌 모델 성능 (5-Fold 교차 검증)")
-st.markdown(f"✅ **평균 R²**: `{scores.mean():.4f}`")
+st.success(f"✅ **예측 오차(MSE)**: `{mse:,.0f}` | **정확도(R²)**: `{r2:.4f}`")
 
 # ---------------------------
-# ✅ 데이터 테이블 출력
+# ✅ 5. 변수 중요도 시각화
 # ---------------------------
-st.subheader("📄 사용된 데이터")
-st.dataframe(df)
+importance = pd.Series(model.feature_importances_, index=X.columns).sort_values()
+
+fig, ax = plt.subplots(figsize=(8, 5))
+importance.plot.barh(ax=ax, color='skyblue')
+ax.set_title("📌 변수 중요도 (대출자수에 대한 영향)", fontproperties=font_prop)
+ax.set_xlabel("중요도", fontproperties=font_prop)
+ax.set_ylabel("변수", fontproperties=font_prop)
+if font_prop:
+    ax.set_yticklabels(importance.index, fontproperties=font_prop)
+st.pyplot(fig)
+
+# ---------------------------
+# ✅ 6. 주요 인사이트
+# ---------------------------
+top_var = importance.sort_values(ascending=False).index[0]
+st.info(f"📊 **대출자수(이용자 수)에 가장 큰 영향을 미치는 변수는 `{top_var}`입니다.**")
