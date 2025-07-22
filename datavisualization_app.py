@@ -1,7 +1,7 @@
 import streamlit as st
-st.set_page_config(page_title="학교 도서관 분석 및 예측", layout="wide")
+st.set_page_config(page_title="학교 & 공공 도서관 통합 분석", layout="wide")
 
-st.title("📚 학교급별 도서관 이용자 수 분석 및 예측")
+st.title("📚 학교 도서관 & 공공 도서관 통합 분석 및 예측")
 
 import pandas as pd
 import numpy as np
@@ -9,6 +9,7 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.font_manager as fm
+import seaborn as sns
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
@@ -31,15 +32,15 @@ mpl.rcParams["font.family"] = font_prop.get_name()
 mpl.rcParams["axes.unicode_minus"] = False
 
 # ---------------------------
-# ✅ 데이터 로드 및 전처리 (KeyError 방지)
+# ✅ 학교 도서관 데이터 로드
 # ---------------------------
 @st.cache_data
-def load_all_data():
+def load_school_data():
     df = pd.read_csv("학교도서관현황_20250717223352.csv", encoding="cp949")
     df = df[df["학교급별(1)"].isin(["초등학교", "중학교", "고등학교"])]
 
     rows = []
-    for year in range(2011, 2024):  # 2011 ~ 2023
+    for year in range(2011, 2024):
         base_cols = [f"{year}.1", f"{year}.2", f"{year}.3"]
         existing_cols = [col for col in base_cols if col in df.columns]
         budget_col = f"{year}.4" if f"{year}.4" in df.columns else None
@@ -60,53 +61,75 @@ def load_all_data():
 
         temp_df = temp_df.rename(columns=rename_dict)
         if "예산" not in temp_df.columns:
-            temp_df["예산"] = np.nan  # 예산 없으면 NaN으로 채움
+            temp_df["예산"] = np.nan
 
         rows.append(temp_df)
 
     df_all = pd.concat(rows, ignore_index=True)
     for col in ["장서수", "사서수", "방문자수", "예산"]:
         df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
-
+    df_all["구분"] = "학교 도서관"
     return df_all
 
-df_all = load_all_data()
+# ---------------------------
+# ✅ 공공 도서관 데이터 로드
+# ---------------------------
+@st.cache_data
+def load_public_data():
+    df = pd.read_csv("공공도서관 자치구별 통계 파일.csv", encoding="cp949", header=1)
+    df = df[df["자치구별(2)"] != "소계"]
+
+    df = df.rename(columns={
+        "자치구별(2)": "자치구",
+        "소계": "개소수",
+        "소계.1": "좌석수",
+        "도서": "장서수",
+        "소계.2": "방문자수",
+        "소계.4": "사서수",
+        "소계.5": "예산"
+    })
+
+    df = df[["자치구", "장서수", "사서수", "방문자수", "예산"]]
+    for col in ["장서수", "사서수", "방문자수", "예산"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["구분"] = "공공 도서관"
+    return df
 
 # ---------------------------
-# ✅ 학교급별 연도별 방문자 수 변화 시각화
+# ✅ 데이터 선택
 # ---------------------------
-st.subheader("📊 학교급별 연도별 방문자 수 변화")
-st.markdown("2011년부터 2023년까지 학교급별 1관당 방문자 수 변화를 보여줍니다.")
+df_school = load_school_data()
+df_public = load_public_data()
 
-fig, ax = plt.subplots(figsize=(12, 6))
-for school in df_all["학교급"].unique():
-    data = df_all[df_all["학교급"] == school]
-    ax.plot(data["연도"], data["방문자수"], marker="o", label=school)
+option = st.radio("분석할 데이터셋을 선택하세요:", ["학교 도서관", "공공 도서관", "통합 비교"])
 
-ax.set_title("학교급별 연도별 방문자 수 변화 (2011~2023)", fontproperties=font_prop)
-ax.set_xlabel("연도", fontproperties=font_prop)
-ax.set_ylabel("1관당 방문자 수", fontproperties=font_prop)
-ax.legend(prop=font_prop)
+if option == "학교 도서관":
+    df = df_school.copy()
+elif option == "공공 도서관":
+    df = df_public.copy()
+else:
+    df = pd.concat([df_school, df_public], ignore_index=True)
 
-yticks = ax.get_yticks()
-ax.set_yticks(yticks)
-ax.set_yticklabels([f"{int(t):,}" for t in yticks], fontproperties=font_prop)
-xticks = sorted(df_all["연도"].unique())
-ax.set_xticks(xticks)
-ax.set_xticklabels(xticks, fontproperties=font_prop)
+# ---------------------------
+# ✅ 상관계수 히트맵
+# ---------------------------
+st.subheader("📊 변수 간 상관관계 (히트맵)")
+st.markdown(f"선택한 데이터셋({option})의 변수 간 상관관계를 보여줍니다.")
+
+corr = df[["장서수", "사서수", "예산", "방문자수"]].corr()
+fig, ax = plt.subplots(figsize=(6, 4))
+sns.heatmap(corr, annot=True, fmt=".2f", cmap="Blues", ax=ax, cbar=True)
+ax.set_title(f"{option} 변수 간 상관관계", fontproperties=font_prop)
 st.pyplot(fig)
-
-latest = df_all[df_all["연도"] == 2023].sort_values(by="방문자수", ascending=False).iloc[0]
-st.success(f"✅ 2023년 기준 **{latest['학교급']}**이(가) 가장 많은 방문자수를 기록했습니다. (약 **{int(latest['방문자수']):,}명**)")
 
 # ---------------------------
 # ✅ 머신러닝 (RandomForest + Linear Regression)
 # ---------------------------
-st.subheader("🔍 전체 연도 기반 방문자 수 예측 및 변수 중요도")
-st.markdown("장서수, 사서수, 예산이 방문자 수에 어떤 영향을 미치는지 분석했습니다.")
+st.subheader("🔍 방문자 수 예측 및 변수 중요도")
+st.markdown(f"{option} 데이터에서 장서수, 사서수, 예산이 방문자 수에 미치는 영향을 분석했습니다.")
 
-X = df_all[["장서수", "사서수", "예산"]].fillna(df_all[["장서수", "사서수", "예산"]].median())
-y = df_all["방문자수"]
+X = df[["장서수", "사서수", "예산"]].fillna(df[["장서수", "사서수", "예산"]].median())
+y = df["방문자수"]
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -117,19 +140,18 @@ y_pred = rf_model.predict(X_test)
 
 mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
-
 st.markdown(f"✅ **예측 오차(MSE)**: `{mse:,.0f}` | **정확도(R²)**: `{r2:.4f}`")
 
 importance = pd.Series(rf_model.feature_importances_, index=X.columns)
 fig2, ax2 = plt.subplots(figsize=(6, 4))
 importance.sort_values().plot.barh(ax=ax2, color="skyblue")
-ax2.set_title("RandomForest 변수 중요도", fontproperties=font_prop)
+ax2.set_title(f"{option} RandomForest 변수 중요도", fontproperties=font_prop)
 ax2.set_xlabel("중요도", fontproperties=font_prop)
 ax2.set_ylabel("변수", fontproperties=font_prop)
 ax2.set_yticklabels(importance.sort_values().index, fontproperties=font_prop)
 st.pyplot(fig2)
 
-# Linear Regression 비교
+# Linear Regression 비교 (교차 검증)
 lr_model = LinearRegression()
 rf_scores = cross_val_score(rf_model, X, y, cv=5, scoring="r2")
 lr_scores = cross_val_score(lr_model, X, y, cv=5, scoring="r2")
@@ -141,8 +163,7 @@ st.markdown(f"""
 """)
 
 # ---------------------------
-# ✅ 통계 데이터 출력
+# ✅ 데이터 테이블 출력
 # ---------------------------
-st.subheader("📄 전체 연도 통계 데이터")
-st.markdown("2011년부터 2023년까지 학교급별 도서관 운영 데이터를 확인할 수 있습니다.")
-st.dataframe(df_all)
+st.subheader("📄 사용된 데이터")
+st.dataframe(df)
