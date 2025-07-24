@@ -11,7 +11,6 @@ import matplotlib as mpl
 import matplotlib.font_manager as fm
 import requests
 import folium
-from shapely.geometry import shape
 from streamlit_folium import folium_static
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
@@ -34,7 +33,6 @@ else:
 def load_school_data():
     base_path = os.path.dirname(__file__)
     file1 = os.path.join(base_path, "문화체육관광부_국가도서관통계_전국학교도서관통계_20231231.csv")
-    file2 = os.path.join(base_path, "학교도서관현황_20250717223352.csv")
     file3 = os.path.join(base_path, "서울시 학교별 학교도서관 현황.csv")
 
     df1 = pd.read_csv(file1, encoding="cp949")
@@ -118,7 +116,7 @@ top_var = importance.sort_values(ascending=False).index[0]
 st.info(f"📊 **대출자수(이용자 수)에 가장 큰 영향을 미치는 변수는 `{top_var}`입니다.**")
 
 # ---------------------------
-# ✅ 4. 서울시 자치구별 지도 시각화
+# ✅ 4. 서울시 자치구별 지도 시각화 (shapely 제거)
 # ---------------------------
 st.subheader("🗺️ 서울시 자치구별 도서관 이용자 수 지도")
 st.markdown("서울특별시 각 자치구의 도서관 방문자 수를 지도 위에 시각화했습니다. 마커 크기가 클수록 방문자 수가 많습니다.")
@@ -129,6 +127,13 @@ df_users.columns = ['구', '이용자수']
 geo_url = "https://raw.githubusercontent.com/southkorea/seoul-maps/master/kostat/2013/json/seoul_municipalities_geo_simple.json"
 res = requests.get(geo_url)
 seoul_geo = res.json()
+
+# 중심 좌표 계산 함수 (shapely 없이)
+def get_center(geometry):
+    coords = geometry['coordinates'][0]
+    lon = sum([c[0] for c in coords]) / len(coords)
+    lat = sum([c[1] for c in coords]) / len(coords)
+    return lat, lon
 
 m = folium.Map(location=[37.5665, 126.9780], zoom_start=11)
 folium.GeoJson(seoul_geo, name="경계", style_function=lambda f: {
@@ -142,11 +147,11 @@ min_v, max_v = df_users['이용자수'].min(), df_users['이용자수'].max()
 for feature in seoul_geo['features']:
     gu = feature['properties']['name']
     if gu in df_users['구'].values:
-        center = shape(feature['geometry']).centroid
+        lat, lon = get_center(feature['geometry'])
         val = df_users[df_users['구'] == gu]['이용자수'].values[0]
         norm = (val - min_v) / (max_v - min_v)
         folium.CircleMarker(
-            location=[center.y, center.x],
+            location=[lat, lon],
             radius=10 + 30 * norm,
             color='blue',
             fill=True,
